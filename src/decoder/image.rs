@@ -1,5 +1,5 @@
 use super::ifd::Value;
-use super::stream::PackBitsReader;
+use super::stream::{PackBitsReader, ReadSamples};
 use super::tag_reader::TagReader;
 use super::ChunkType;
 use super::{predict_f16, predict_f32, predict_f64, ValueReader};
@@ -11,7 +11,7 @@ use crate::{
     ColorType, Directory, TiffError, TiffFormatError, TiffResult, TiffUnsupportedError, UsageError,
 };
 
-use std::io::{self, Cursor, Read, Seek};
+use std::io::{Cursor, Read, Seek};
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -698,7 +698,7 @@ impl Image {
         dimensions: (u32, u32),
         samples: u16,
         #[cfg_attr(not(feature = "fax"), allow(unused_variables))] fill_order: u16,
-    ) -> TiffResult<Box<dyn Read + 'r>> {
+    ) -> TiffResult<Box<dyn ReadSamples + 'r>> {
         Ok(match compression_method {
             CompressionMethod::None => Box::new(reader),
             CompressionMethod::SgiLog => match samples {
@@ -1204,7 +1204,7 @@ impl Image {
             let mut packed = vec![0u8; chunk_row_bytes];
 
             for row in buf.chunks_mut(layout.row_stride).take(data_dims.1 as usize) {
-                reader.read_exact(&mut packed)?;
+                reader.read_samples(&mut packed)?;
 
                 let out_row = &mut row[..data_row_bytes];
                 unpack_bits(&packed, out_row, tiff_bps, samples_per_data_row, out_bps);
@@ -1238,7 +1238,7 @@ impl Image {
         } else if is_output_chunk_rows && is_all_bits {
             // Here we can read directly into the output buffer itself.
             let tile = &mut buf[..chunk_row_bytes * data_dims.1 as usize];
-            reader.read_exact(tile)?;
+            reader.read_samples(tile)?;
 
             for row in tile.chunks_mut(chunk_row_bytes) {
                 super::fix_endianness_and_predict(
@@ -1272,7 +1272,7 @@ impl Image {
             // this case is handled specially when needed.
             let mut encoded = vec![0u8; chunk_row_bytes];
             for row in buf.chunks_mut(layout.row_stride).take(data_dims.1 as usize) {
-                reader.read_exact(&mut encoded)?;
+                reader.read_samples(&mut encoded)?;
 
                 let row = &mut row[..data_row_bytes];
                 match color_type.bit_depth() {
@@ -1308,11 +1308,12 @@ impl Image {
                 // Two ways how we get here: we have more bytes in our chunk data than in the image
                 // we are to read. Then we need to skip the rest of the data. Or we have a bigger
                 // row stride than the chunk contains data, then we  need to fill only the front.
-                reader.read_exact(&mut row[..used])?;
-                // Skip horizontal padding
                 if chunk_row_bytes > data_row_bytes {
-                    let len = u64::try_from(chunk_row_bytes - data_row_bytes)?;
-                    io::copy(&mut reader.by_ref().take(len), &mut io::sink())?;
+                    // Skip horizontal padding
+                    let skip = u64::try_from(chunk_row_bytes - data_row_bytes)?;
+                    reader.read_padded_samples(&mut row[..used], skip)?;
+                } else {
+                    reader.read_samples(&mut row[..used])?;
                 }
 
                 super::fix_endianness_and_predict(
@@ -1370,7 +1371,7 @@ impl Image {
                 // width, and writing their horizontal padding would spill into the following
                 // output row (and predict/invert would run past the chunk's own columns).
                 let row = &mut row[..data_row_bytes];
-                reader.read_exact(&mut encoded)?;
+                reader.read_samples(&mut encoded)?;
 
                 Self::compact_photometric_bytes(&mut encoded, row, &photo_range);
 

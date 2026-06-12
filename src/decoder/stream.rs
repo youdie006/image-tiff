@@ -122,6 +122,39 @@ impl<R: Read> EndianReader<R> {
 // # READERS
 //
 
+/// A variant of `io::Read` that takes one block to the end.
+///
+/// We want our decompression engines to be much more specialized than the standard library trait.
+/// Firstly there is more information available to communicate (the tiff Type, known decompressed
+/// size, …) and secondly they can potentially *reset*. This could be solved with an extension trait
+/// but since we want to avoid `read` in favor of `read_exact` (or an equivalent if we want to pass
+/// in a strided block buffer) a separate trait that's auto derived is favored.
+///
+/// FIXME: Also consider that we will want to read subsets of samples. Via IO this is done by
+/// discarding data *after* it is put into the output buffer. Yet, for some decompression that write
+/// alone is considerable work where it could simply skip bits more efficiently. So the reader would
+/// likely want to know about a sample mask.
+pub trait ReadSamples {
+    fn read_samples(&mut self, buf: &mut [u8]) -> io::Result<()>;
+
+    /// Read a row of samples and throw away some additional padding samples at the end.
+    ///
+    /// This is automatically implemented for `Self: Read` as a copy into `io::Sink`.
+    fn read_padded_samples(&mut self, buf: &mut [u8], discard: u64) -> io::Result<()>;
+}
+
+impl<R: Read> ReadSamples for R {
+    fn read_samples(&mut self, buf: &mut [u8]) -> io::Result<()> {
+        self.read_exact(buf)
+    }
+
+    fn read_padded_samples(&mut self, buf: &mut [u8], discard: u64) -> io::Result<()> {
+        self.read_exact(buf)?;
+        std::io::copy(&mut self.by_ref().take(discard), &mut std::io::sink())?;
+        Ok(())
+    }
+}
+
 /// Type alias for the deflate Reader
 #[cfg(feature = "deflate")]
 pub type DeflateReader<R> = flate2::read::ZlibDecoder<R>;
