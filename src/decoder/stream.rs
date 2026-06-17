@@ -124,6 +124,9 @@ impl<R: Read> EndianReader<R> {
 
 /// A variant of `io::Read` that takes one block to the end.
 ///
+/// This is derived from `Read` so that any special optimization done by `std` (or any nightly crate
+/// for that matter) surely remains usable.
+///
 /// We want our decompression engines to be much more specialized than the standard library trait.
 /// Firstly there is more information available to communicate (the tiff Type, known decompressed
 /// size, …) and secondly they can potentially *reset*. This could be solved with an extension trait
@@ -134,9 +137,7 @@ impl<R: Read> EndianReader<R> {
 /// discarding data *after* it is put into the output buffer. Yet, for some decompression that write
 /// alone is considerable work where it could simply skip bits more efficiently. So the reader would
 /// likely want to know about a sample mask.
-pub trait ReadSamples {
-    fn read_samples(&mut self, buf: &mut [u8]) -> io::Result<()>;
-
+pub trait ReadSamples: Read {
     /// Read a row of samples and throw away some additional padding samples at the end.
     ///
     /// This is automatically implemented for `Self: Read` as a copy into `io::Sink`.
@@ -144,10 +145,6 @@ pub trait ReadSamples {
 }
 
 impl<R: Read> ReadSamples for R {
-    fn read_samples(&mut self, buf: &mut [u8]) -> io::Result<()> {
-        self.read_exact(buf)
-    }
-
     fn read_padded_samples(&mut self, buf: &mut [u8], discard: u64) -> io::Result<()> {
         self.read_exact(buf)?;
         std::io::copy(&mut self.by_ref().take(discard), &mut std::io::sink())?;
