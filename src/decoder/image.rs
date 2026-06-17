@@ -3,6 +3,7 @@ use super::stream::{PackBitsReader, ReadSamples};
 use super::tag_reader::TagReader;
 use super::ChunkType;
 use super::{predict_f16, predict_f32, predict_f64, ValueReader};
+use crate::decoder::stream::CompressionEngines;
 use crate::tags::{
     ByteOrder, CompressionMethod, ExtraSamples, PhotometricInterpretation, PlanarConfiguration,
     Predictor, SampleFormat, Tag,
@@ -698,6 +699,7 @@ impl Image {
         dimensions: (u32, u32),
         samples: u16,
         #[cfg_attr(not(feature = "fax"), allow(unused_variables))] fill_order: u16,
+        engines: &mut CompressionEngines,
     ) -> TiffResult<Box<dyn ReadSamples + 'r>> {
         Ok(match compression_method {
             CompressionMethod::None => Box::new(reader),
@@ -729,6 +731,7 @@ impl Image {
             CompressionMethod::LZW => Box::new(super::stream::LZWReader::new(
                 reader,
                 usize::try_from(compressed_length)?,
+                engines,
             )),
             #[cfg(feature = "zstd")]
             CompressionMethod::ZSTD => Box::new(zstd::Decoder::new(reader)?),
@@ -1033,6 +1036,7 @@ impl Image {
         layout: &ReadoutLayout,
         chunk_index: u32,
         scratch: &mut Vec<u8>,
+        engines: &mut CompressionEngines,
     ) -> TiffResult<()> {
         let ValueReader {
             reader,
@@ -1179,6 +1183,7 @@ impl Image {
             chunk_dims,
             self.samples,
             self.fill_order,
+            engines,
         )?;
 
         // Extended bit depths (9-15, 17-31): packed N-bit samples must be unpacked to
@@ -1403,6 +1408,7 @@ impl Image {
             }
         }
 
+        reader.cache_or_destroy(engines);
         Ok(())
     }
 
