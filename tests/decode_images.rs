@@ -507,6 +507,30 @@ fn test_tiled_extra_samples_border_u8() {
 }
 
 #[test]
+fn test_tiled_planar_rgb_u8() {
+    // Regression test for #403: expand_chunk panicked on bottom-edge tiles of
+    // planes past the first.
+    let path = PathBuf::from(TEST_IMAGE_DIR).join("tiled-planar-rgb-u8.tif");
+    let img_file = File::open(path).expect("Cannot find test image!");
+    let mut decoder = Decoder::open(img_file).expect("Cannot create decoder");
+    decoder.next_image().expect("Cannot read image IFD");
+    assert_eq!(decoder.dimensions().unwrap(), (24, 24));
+    assert_eq!(decoder.colortype().unwrap(), ColorType::RGB(8));
+
+    let mut result = DecodingSampleBuffer::U8(vec![]);
+    decoder
+        .read_image_to_buffer(&mut result)
+        .expect("Decoding a tiled planar image must not panic or fail");
+
+    let DecodingSampleBuffer::U8(data) = result else {
+        panic!("Wrong bit depth")
+    };
+    // 3 samples of 24x24, all zeros in the fixture.
+    assert_eq!(data.len(), 3 * 24 * 24);
+    assert!(data.iter().all(|&b| b == 0));
+}
+
+#[test]
 fn test_inner_access() {
     let path = PathBuf::from(TEST_IMAGE_DIR).join("tiled-rect-rgb-u8.tif");
     let img_file = File::open(path).expect("Cannot find test image!");
